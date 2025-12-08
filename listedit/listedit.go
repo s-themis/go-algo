@@ -203,3 +203,65 @@ func Edit(a, b []any, f CostFunc, eq EqualFunc) (int64, []Op) {
 
 	return int64(matrix[al][bl]), ops
 }
+
+type MultiOp struct {
+	Kind    string // the kind of operation, one of "match", "replace", "delete", "insert"
+	IdxA    int    // the index of array a where the operation should be applied as the array is being transformed
+	ValueA  any    // the value of array a at IdxA, relevant for "match", "replace" and "delete" operations
+	IdxB    int    // the index of array b, relevant for "match", "replace" and "insert" operations
+	ValueB  any    // the value of array b at IdxB, relevant for "match", "replace" and "insert" operations
+	SubA    int    // the sub-array index in multi-array a
+	SubIdxA int    // the index within the sub-array in multi-array a
+}
+
+func MultiEdit(a [][]any, b []any, f CostFunc, eq EqualFunc) (int64, []MultiOp) {
+
+	bounds := make([]int, len(a)+1)
+	bounds[0] = 0
+	for i, subA := range a {
+		bounds[i+1] = bounds[i] + len(subA)
+	}
+
+	mergedA := make([]any, 0, bounds[len(bounds)-1])
+	for _, subA := range a {
+		mergedA = append(mergedA, subA...)
+	}
+
+	totalCost, ops := Edit(mergedA, b, f, eq)
+
+	multiOps := make([]MultiOp, len(ops))
+
+	for i, op := range ops {
+		// Find sub-array and sub-index for each operation
+		for subA := 0; subA < len(bounds)-1; subA++ {
+			if (op.IdxA >= bounds[subA] && op.IdxA < bounds[subA+1]) || (subA == len(bounds)-2 && op.IdxA == bounds[subA+1] && op.Kind == "insert") {
+
+				// translate Op to MultiOp
+				multiOps[i] = MultiOp{
+					Kind:    op.Kind,
+					IdxA:    op.IdxA,
+					ValueA:  op.ValueA,
+					IdxB:    op.IdxB,
+					ValueB:  op.ValueB,
+					SubA:    subA,
+					SubIdxA: op.IdxA - bounds[subA],
+				}
+
+				// Update bounds for insert and delete operations
+				switch op.Kind {
+				case "insert":
+					for j := subA + 1; j < len(bounds); j++ {
+						bounds[j]++
+					}
+				case "delete":
+					for j := subA + 1; j < len(bounds); j++ {
+						bounds[j]--
+					}
+				}
+				break
+			}
+		}
+	}
+
+	return totalCost, multiOps
+}

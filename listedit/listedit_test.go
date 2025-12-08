@@ -15,11 +15,19 @@ type editTest struct {
 	r    int64
 }
 
+type multiEditTest struct {
+	a  []string
+	b  string
+	f  listedit.CostFunc
+	eq listedit.EqualFunc
+	r  int64
+}
+
 func uniqueCost(ar, br any) listedit.Cost {
 	return listedit.Cost{SwapAB: 1, DeleteA: 3, InsertB: 5}
 }
 
-var distanceTests = []editTest{
+var editTests = []editTest{
 	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: "abc", b: "abc"},
 	{f: uniqueCost, eq: listedit.DefaultEqual, r: 1, a: "abc", b: "abd"},
 	{f: uniqueCost, eq: listedit.DefaultEqual, r: 1, a: "abc", b: "adc"},
@@ -46,8 +54,8 @@ var distanceTests = []editTest{
 	{f: listedit.StandardCost, eq: listedit.DefaultEqual, r: 5, a: "abcde", b: ""},
 }
 
-func (s *S) TestDistance(c *C) {
-	for _, test := range distanceTests {
+func (s *S) TestEdit(c *C) {
+	for _, test := range editTests {
 		c.Logf("Test: %v", test)
 		f := test.f
 		if f == nil {
@@ -62,6 +70,50 @@ func (s *S) TestDistance(c *C) {
 		r, ops := listedit.Edit(alist, blist, f, eq)
 		c.Assert(r, Equals, test.r)
 		c.Assert(applyOps(alist, ops), DeepEquals, blist)
+	}
+}
+
+var multiEditTests = []multiEditTest{
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"abc"}, b: "abc"},
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"ab", "c"}, b: "abc"},
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"a", "b", "c"}, b: "abc"},
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"a", "bc"}, b: "abc"},
+
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"abc", ""}, b: "abc"},
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"ab", "", "c"}, b: "abc"},
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"ab", "c", ""}, b: "abc"},
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"a", "", "b", "", "c"}, b: "abc"},
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"a", "", "bc"}, b: "abc"},
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"a", "bc", ""}, b: "abc"},
+	{f: uniqueCost, eq: listedit.DefaultEqual, r: 0, a: []string{"", "abc"}, b: "abc"},
+
+	{f: listedit.StandardCost, eq: listedit.DefaultEqual, r: 3, a: []string{"abcdefg"}, b: "axcdfgh"},
+	{f: listedit.StandardCost, eq: listedit.DefaultEqual, r: 3, a: []string{"a", "bcdefg"}, b: "axcdfgh"},
+	{f: listedit.StandardCost, eq: listedit.DefaultEqual, r: 3, a: []string{"ab", "cdefg"}, b: "axcdfgh"},
+	{f: listedit.StandardCost, eq: listedit.DefaultEqual, r: 3, a: []string{"a", "b", "cdefg"}, b: "axcdfgh"},
+	{f: listedit.StandardCost, eq: listedit.DefaultEqual, r: 3, a: []string{"a", "bc", "defg"}, b: "axcdfgh"},
+	{f: listedit.StandardCost, eq: listedit.DefaultEqual, r: 3, a: []string{"a", "bc", "d", "efg"}, b: "axcdfgh"},
+}
+
+func (s *S) TestMultiEdit(c *C) {
+	for _, test := range multiEditTests {
+		c.Logf("Test: %v", test)
+		f := test.f
+		if f == nil {
+			f = listedit.StandardCost
+		}
+		eq := test.eq
+		if eq == nil {
+			eq = listedit.DefaultEqual
+		}
+		var alist [][]any
+		for _, astr := range test.a {
+			alist = append(alist, splitString(astr))
+		}
+		blist := splitString(test.b)
+		r, multiOps := listedit.MultiEdit(alist, blist, f, eq)
+		c.Assert(r, Equals, test.r)
+		c.Assert(merge(applyMultiOps(alist, multiOps)), DeepEquals, blist)
 	}
 }
 
@@ -90,6 +142,37 @@ func applyOps(a []any, ops []listedit.Op) []any {
 		}
 	}
 	return a
+}
+
+func applyMultiOps(a [][]any, ops []listedit.MultiOp) [][]any {
+	// Simulate applying the operations to multi-array a
+	for _, op := range ops {
+		switch op.Kind {
+		case "match":
+			continue
+		case "replace":
+			a[op.SubA][op.SubIdxA] = op.ValueB
+		case "delete":
+			subA := a[op.SubA]
+			subA = append(subA[:op.SubIdxA], subA[op.SubIdxA+1:]...)
+			a[op.SubA] = subA
+		case "insert":
+			subA := a[op.SubA]
+			subA = append(subA, "")                      // extend slice with dummy element
+			copy(subA[op.SubIdxA+1:], subA[op.SubIdxA:]) // shift elements after insertion index to the right
+			subA[op.SubIdxA] = op.ValueB
+			a[op.SubA] = subA
+		}
+	}
+	return a
+}
+
+func merge(a [][]any) []any {
+	merged := []any{}
+	for _, subA := range a {
+		merged = append(merged, subA...)
+	}
+	return merged
 }
 
 func BenchmarkDistance(b *testing.B) {
